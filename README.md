@@ -10,16 +10,20 @@ Supports DMs, channel messages, threaded replies, and cron job delivery. No exte
 - **Thread support** — threaded replies map to Rocket.Chat threads
 - **Channel delivery** — send cron job output to any room
 - **Authorization** — allowlist users or open it up to everyone
-- **Zero dependencies** — uses only the built-in `requests` library
+- **Zero dependencies** — only needs the built-in `requests` library
 
 ## Quick Install
 
-```bash
-# 1. Copy the plugin into your Hermes Agent installation
-cp -r hermes-agent/plugins/platforms/rocketchat \
-      ~/.hermes/hermes-agent/plugins/platforms/rocketchat/
+### Option 1: `hermes plugins install` (recommended)
 
-# 2. Set environment variables in ~/.hermes/.env
+```bash
+hermes plugins install WyattSanders/hermes-rocketchat-plugin
+hermes plugins enable rocketchat-platform
+```
+
+Then set your env vars and restart the gateway:
+
+```bash
 cat >> ~/.hermes/.env << 'EOF'
 ROCKETCHAT_URL=http://localhost:3000
 ROCKETCHAT_USER=hermes-bot
@@ -28,12 +32,24 @@ ROCKETCHAT_ALLOW_ALL_USERS=true
 ROCKETCHAT_HOME_CHANNEL=hermes-cron
 EOF
 
-# 3. Restart the gateway
 hermes gateway restart
-
-# 4. Verify it loaded
 hermes gateway status
 ```
+
+### Option 2: Manual copy
+
+```bash
+# Clone and copy the plugin files into your Hermes Agent installation
+git clone https://github.com/WyattSanders/hermes-rocketchat-plugin.git
+cp -r hermes-rocketchat-plugin/hermes-agent/plugins/platforms/rocketchat \
+      ~/.hermes/hermes-agent/plugins/platforms/rocketchat/
+
+# OR use the install script
+cd hermes-rocketchat-plugin
+bash install.sh
+```
+
+Then set env vars and restart as above.
 
 ## Prerequisites
 
@@ -97,6 +113,14 @@ hermes cron create \
   "Summarize today's headlines"
 ```
 
+### Standalone Sender
+
+For scripts or cron jobs outside the gateway process:
+
+```bash
+python standalone_example.py --room-id GENERAL --text "Hello from the bridge"
+```
+
 ## Verification
 
 Test auth manually:
@@ -120,7 +144,8 @@ The adapter polls Rocket.Chat's `subscriptions.get` endpoint every N seconds, pr
 ## Troubleshooting
 
 **Plugin not showing up in `hermes gateway status`**
-- The gateway caches discovered platforms at startup. Restart it after copying the plugin files.
+- If installed via `hermes plugins install`, make sure to enable it: `hermes plugins enable rocketchat-platform`
+- The gateway caches discovered platforms at startup. Restart after installing.
 - `hermes gateway restart && sleep 3 && hermes gateway status`
 
 **Auth failures**
@@ -129,6 +154,18 @@ The adapter polls Rocket.Chat's `subscriptions.get` endpoint every N seconds, pr
 
 **MongoDB compatibility**
 - Rocket.Chat 8.x requires MongoDB 8.0+. Consider using MongoDB 7.0 for stability until Rocket.Chat 9 releases.
+
+## Project Structure
+
+```
+├── plugin.yaml          # Hermes plugin manifest (kind: platform)
+├── __init__.py          # Plugin entry point
+├── adapter.py           # Full RocketChatAdapter (522 lines)
+├── standalone_example.py  # Send messages without the gateway
+├── install.sh           # Manual install script
+├── docs/                # API reference, Docker setup, troubleshooting
+└── hermes-agent/        # Manual copy layout (same files)
+```
 
 ## License
 
