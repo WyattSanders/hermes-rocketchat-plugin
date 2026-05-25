@@ -1,0 +1,10 @@
+# Rocket.Chat Hermes Plugin
+__pycache__/
+*.pyc
+.DS_Store
+*.swp
+*.swo
+.env
+*.egg-info/
+dist/
+build/

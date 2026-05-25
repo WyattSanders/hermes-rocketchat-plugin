@@ -1,0 +1,40 @@
+name: rocketchat-platform
+label: Rocket.Chat
+kind: platform
+version: 1.0.0
+description: >
+  Rocket.Chat gateway adapter for Hermes Agent.
+  Connects to a self-hosted Rocket.Chat server via REST API polling.
+  Supports DMs and channel messages, threaded replies, and media sending.
+  No external dependencies beyond the `requests` library.
+author: Wyatt Sanders
+requires_env:
+  - name: ROCKETCHAT_URL
+    description: "Rocket.Chat server URL (e.g. http://localhost:3000)"
+    prompt: "Rocket.Chat URL"
+    password: false
+  - name: ROCKETCHAT_USER
+    description: "Bot username for authentication"
+    prompt: "Bot username"
+    password: false
+  - name: ROCKETCHAT_PASSWORD
+    description: "Bot password for authentication"
+    prompt: "Bot password"
+    password: true
+optional_env:
+  - name: ROCKETCHAT_POLL_INTERVAL
+    description: "Seconds between message polls (default: 3)"
+    prompt: "Poll interval in seconds (default: 3)"
+    password: false
+  - name: ROCKETCHAT_ALLOWED_USERS
+    description: "Comma-separated usernames allowed to chat with the bot (blank=allow all)"
+    prompt: "Allowed users (comma-separated, blank=allow all)"
+    password: false
+  - name: ROCKETCHAT_ALLOW_ALL_USERS
+    description: "Allow any user to chat with the bot (true/false, default: false)"
+    prompt: "Allow all users? (true/false)"
+    password: false
+  - name: ROCKETCHAT_HOME_CHANNEL
+    description: "Default room ID or username for cron / notification delivery"
+    prompt: "Home channel (room ID or username for cron delivery)"
+    password: false
