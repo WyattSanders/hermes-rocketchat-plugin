@@ -75,8 +75,8 @@ Then set env vars and restart as above.
 | `ROCKETCHAT_USER` | Yes | — | Bot username |
 | `ROCKETCHAT_PASSWORD` | Yes | — | Bot password |
 | `ROCKETCHAT_POLL_INTERVAL` | No | `3` | Seconds between message polls |
-| `ROCKETCHAT_ALLOWED_USERS` | No | — | Comma-separated usernames allowed to chat |
-| `ROCKETCHAT_ALLOW_ALL_USERS` | No | `false` | Allow any user to interact with the bot |
+| `ROCKETCHAT_ALLOWED_USERS` | No | — | Comma-separated usernames allowed to chat. If neither this nor `ROCKETCHAT_ALLOW_ALL_USERS` is set, all messages are ignored |
+| `ROCKETCHAT_ALLOW_ALL_USERS` | No | `false` | Allow any user to interact with the bot (required if no allowlist is set) |
 | `ROCKETCHAT_HOME_CHANNEL` | No | — | Room ID for cron/notification delivery |
 
 ### YAML Config (alternative)
