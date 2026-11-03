@@ -34,8 +34,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections import deque
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Deque, Dict, List, Optional, Set
 
 import requests
 
@@ -51,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_POLL_INTERVAL = 3.0
 MAX_MESSAGE_LENGTH = 16_000
+MAX_SEEN_MESSAGE_IDS = 5_000
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +264,8 @@ class RocketChatAdapter(BasePlatformAdapter):
         self._user_id: Optional[str] = None
         self._bot_username: Optional[str] = None
         self._seen_message_ids: Set[str] = set()
+        self._seen_message_order: Deque[str] = deque()
+        self._connected_at: Optional[datetime] = None
         self._stopping = False
 
     # ------------------------------------------------------------------
@@ -296,6 +300,7 @@ class RocketChatAdapter(BasePlatformAdapter):
 
     async def connect(self) -> bool:
         """Authenticate and start the polling loop."""
+        self._connected_at = datetime.now(timezone.utc)
         try:
             self._authenticate()
             me_resp = self._session.get(
@@ -310,6 +315,13 @@ class RocketChatAdapter(BasePlatformAdapter):
                 self._bot_username,
                 me.get("_id"),
             )
+            if not self.allow_all and not self.allowed_users:
+                logger.warning(
+                    "Rocket.Chat: allow_all_users is false and no allowed users are "
+                    "configured — all messages will be ignored. Set "
+                    "ROCKETCHAT_ALLOWED_USERS to the usernames that may talk to the "
+                    "bot, or ROCKETCHAT_ALLOW_ALL_USERS=true to accept everyone."
+                )
             asyncio.create_task(self._poll_loop())
             return True
         except Exception as exc:
@@ -432,7 +444,12 @@ class RocketChatAdapter(BasePlatformAdapter):
                 msg_id = msg.get("_id", "")
                 if msg_id in self._seen_message_ids:
                     continue
-                self._seen_message_ids.add(msg_id)
+                self._mark_seen(msg_id)
+
+                # Skip messages that predate this connection — otherwise every
+                # restart replays the recent history of each DM.
+                if self._is_before_connect(msg.get("ts")):
+                    continue
 
                 # Skip own messages
                 if msg.get("u", {}).get("_id") == self._user_id:
@@ -481,11 +498,31 @@ class RocketChatAdapter(BasePlatformAdapter):
                 pass
         return datetime.now(timezone.utc)
 
+    def _is_before_connect(self, ts: Any) -> bool:
+        """Return True if a message timestamp predates the current connection."""
+        if self._connected_at is None:
+            return False
+        parsed = self._parse_timestamp(ts)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed < self._connected_at
+
+    def _mark_seen(self, message_id: str) -> None:
+        """Record a message id, dropping the oldest ids past MAX_SEEN_MESSAGE_IDS."""
+        if not message_id or message_id in self._seen_message_ids:
+            return
+        self._seen_message_ids.add(message_id)
+        self._seen_message_order.append(message_id)
+        while len(self._seen_message_order) > MAX_SEEN_MESSAGE_IDS:
+            self._seen_message_ids.discard(self._seen_message_order.popleft())
+
     def _is_authorized(self, username: str) -> bool:
-        """Check if a username is allowed to interact with the bot."""
+        """Check if a username is allowed to interact with the bot.
+
+        Fails closed: unless ``allow_all`` is enabled, the username must be in
+        ``allowed_users``. An empty allowlist authorizes nobody.
+        """
         if self.allow_all:
-            return True
-        if not self.allowed_users:
             return True
         return username in self.allowed_users
 
