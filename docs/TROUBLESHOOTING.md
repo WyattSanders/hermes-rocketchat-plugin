@@ -72,7 +72,7 @@ If it fails:
 ## Bot responds to some users but not others
 
 By default (`ROCKETCHAT_ALLOW_ALL_USERS=false` and no `ROCKETCHAT_ALLOWED_USERS` set),
-the bot accepts messages from anyone.
+the bot ignores **all** messages and logs a warning at startup.
 
 To restrict to specific users, in `~/.hermes/.env`:
 ```bash
@@ -88,9 +88,8 @@ ROCKETCHAT_ALLOW_ALL_USERS=true
 
 ## Messages sent to wrong room / duplicate messages
 
-The plugin tracks seen message IDs in memory. If you restart the gateway, it will
-re-process up to 20 recent messages from each room on next poll (this is expected
-behavior for catch-up, not a bug).
+The plugin tracks seen message IDs in memory. After a restart it only processes
+messages newer than the bot's last reply in each DM, so answered messages are not replayed.
 
 If you see many duplicates in a short window, check that only one instance of the
 gateway is running:

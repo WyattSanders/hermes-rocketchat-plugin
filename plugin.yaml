@@ -27,14 +27,14 @@ optional_env:
     prompt: "Poll interval in seconds (default: 3)"
     password: false
   - name: ROCKETCHAT_ALLOWED_USERS
-    description: "Comma-separated usernames allowed to chat with the bot (blank=allow all)"
-    prompt: "Allowed users (comma-separated, blank=allow all)"
+    description: "Comma-separated usernames allowed to chat with the bot (blank=nobody unless ROCKETCHAT_ALLOW_ALL_USERS=true)"
+    prompt: "Allowed users (comma-separated)"
     password: false
   - name: ROCKETCHAT_ALLOW_ALL_USERS
     description: "Allow any user to chat with the bot (true/false, default: false)"
     prompt: "Allow all users? (true/false)"
     password: false
   - name: ROCKETCHAT_HOME_CHANNEL
-    description: "Default room ID or username for cron / notification delivery"
+    description: "Room ID, #channel or @username for cron / notification delivery"
     prompt: "Home channel (room ID or username for cron delivery)"
     password: false
