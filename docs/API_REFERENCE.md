@@ -74,12 +74,15 @@ Response:
 
 ---
 
-### GET /api/v1/chat.getMessages
-Fetch recent messages from a room.
+### GET /api/v1/im.history
+Fetch recent messages from a DM room (newest first).
 
 Query params:
 - `roomId` (required) — room ID
-- `limit` (optional, default 20) — max messages to return
+- `count` (optional, the adapter uses 20) — max messages to return
+
+Note: `chat.getMessages` is *not* a room-history endpoint — since 8.9.0 it is a
+`POST` that looks messages up by `messageIds`.
 
 Response:
 ```json

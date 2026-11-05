@@ -29,7 +29,7 @@ ROCKETCHAT_URL=http://localhost:3000
 ROCKETCHAT_USER=hermes-bot
 ROCKETCHAT_PASSWORD=your-bot-password
 ROCKETCHAT_ALLOW_ALL_USERS=true
-ROCKETCHAT_HOME_CHANNEL=hermes-cron
+ROCKETCHAT_HOME_CHANNEL=#hermes-cron
 EOF
 
 hermes gateway restart
@@ -75,9 +75,9 @@ Then set env vars and restart as above.
 | `ROCKETCHAT_USER` | Yes | — | Bot username |
 | `ROCKETCHAT_PASSWORD` | Yes | — | Bot password |
 | `ROCKETCHAT_POLL_INTERVAL` | No | `3` | Seconds between message polls |
-| `ROCKETCHAT_ALLOWED_USERS` | No | — | Comma-separated usernames allowed to chat |
+| `ROCKETCHAT_ALLOWED_USERS` | No | — | Comma-separated usernames allowed to chat. If neither this nor `ROCKETCHAT_ALLOW_ALL_USERS=true` is set, all messages are ignored. |
 | `ROCKETCHAT_ALLOW_ALL_USERS` | No | `false` | Allow any user to interact with the bot |
-| `ROCKETCHAT_HOME_CHANNEL` | No | — | Room ID for cron/notification delivery |
+| `ROCKETCHAT_HOME_CHANNEL` | No | — | Room ID, `#channel` or `@username` for cron/notification delivery |
 
 ### YAML Config (alternative)
 
@@ -139,7 +139,14 @@ Hermes Gateway → RocketChatAdapter → Rocket.Chat REST API
                  (polling loop)      (DMs, channels)
 ```
 
-The adapter polls Rocket.Chat's `subscriptions.get` endpoint every N seconds, processes new DM messages, and dispatches them to the Hermes gateway as `MessageEvent` objects. Outgoing messages are sent via `chat.sendMessage`.
+The adapter polls Rocket.Chat's `subscriptions.get` endpoint every N seconds, reads each DM room's recent history with `im.history`, and dispatches new messages to the Hermes gateway as `MessageEvent` objects. On startup, messages the bot already answered are not replayed. Outgoing messages use `chat.sendMessage` (room ID) or `chat.postMessage` (`#channel` / `@user`).
+
+## Tests
+
+```bash
+pip install pytest requests
+pytest tests      # offline; Hermes gateway modules are stubbed
+```
 
 ## Troubleshooting
 

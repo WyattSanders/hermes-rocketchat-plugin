@@ -51,6 +51,38 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_POLL_INTERVAL = 3.0
 MAX_MESSAGE_LENGTH = 16_000
+HISTORY_COUNT = 20
+
+
+def _post_message(
+    session: requests.Session,
+    base_url: str,
+    headers: Dict[str, str],
+    chat_id: str,
+    text: str,
+    thread_id: Optional[str] = None,
+    timeout: int = 15,
+) -> Dict[str, Any]:
+    """Send ``text`` to a room and return the decoded JSON response.
+
+    ``chat_id`` may be a room ID (``chat.sendMessage``) or a ``#channel`` /
+    ``@username`` name (``chat.postMessage``), so a human-readable
+    ``ROCKETCHAT_HOME_CHANNEL`` works for cron delivery.
+    """
+    base = base_url.rstrip("/")
+    if chat_id.startswith(("#", "@")):
+        body: Dict[str, Any] = {"channel": chat_id, "text": text}
+        if thread_id:
+            body["tmid"] = thread_id
+        resp = session.post(f"{base}/api/v1/chat.postMessage", json=body,
+                            headers=headers, timeout=timeout)
+    else:
+        payload: Dict[str, Any] = {"text": text, "roomId": chat_id}
+        if thread_id:
+            payload["tmid"] = thread_id
+        resp = session.post(f"{base}/api/v1/chat.sendMessage", json={"message": payload},
+                            headers=headers, timeout=timeout)
+    return resp.json()
 
 
 # ---------------------------------------------------------------------------
@@ -166,17 +198,7 @@ async def _standalone_send(
             "Content-Type": "application/json",
         }
 
-        payload: Dict[str, Any] = {"text": message, "roomId": chat_id}
-        if thread_id:
-            payload["tmid"] = thread_id
-
-        send_resp = session.post(
-            f"{url.rstrip('/')}/api/v1/chat.sendMessage",
-            json={"message": payload},
-            headers=headers,
-            timeout=15,
-        )
-        send_data = send_resp.json()
+        send_data = _post_message(session, url, headers, chat_id, message, thread_id)
 
         if send_data.get("success"):
             msg_id = send_data.get("message", {}).get("_id")
@@ -261,8 +283,16 @@ class RocketChatAdapter(BasePlatformAdapter):
         self._auth_token: Optional[str] = None
         self._user_id: Optional[str] = None
         self._bot_username: Optional[str] = None
-        self._seen_message_ids: Set[str] = set()
+        # room_id -> IDs of messages in that room's current history window
+        self._seen_by_room: Dict[str, Set[str]] = {}
         self._stopping = False
+        self._poll_task: Optional[asyncio.Task] = None
+
+        if not self.allow_all and not self.allowed_users:
+            logger.warning(
+                "Rocket.Chat: neither ROCKETCHAT_ALLOWED_USERS nor "
+                "ROCKETCHAT_ALLOW_ALL_USERS is set — all inbound messages will be ignored."
+            )
 
     # ------------------------------------------------------------------
     # Authentication
@@ -290,6 +320,17 @@ class RocketChatAdapter(BasePlatformAdapter):
             "Content-Type": "application/json",
         }
 
+    def _api_get(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """GET an API endpoint, logging in again once if the token expired."""
+        url = f"{self.url.rstrip('/')}/api/v1/{endpoint}"
+        resp = self._session.get(url, params=params, headers=self._headers(), timeout=15)
+        if resp.status_code == 401:
+            logger.info("Rocket.Chat token rejected; re-authenticating")
+            self._authenticate()
+            resp = self._session.get(url, params=params, headers=self._headers(), timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+
     # ------------------------------------------------------------------
     # BasePlatformAdapter required methods
     # ------------------------------------------------------------------
@@ -297,20 +338,16 @@ class RocketChatAdapter(BasePlatformAdapter):
     async def connect(self) -> bool:
         """Authenticate and start the polling loop."""
         try:
-            self._authenticate()
-            me_resp = self._session.get(
-                f"{self.url.rstrip('/')}/api/v1/me",
-                headers=self._headers(),
-                timeout=10,
-            )
-            me = me_resp.json()
+            await asyncio.to_thread(self._authenticate)
+            me = await asyncio.to_thread(self._api_get, "me", {})
             self._bot_username = me.get("username")
             logger.info(
                 "Rocket.Chat connected — bot user: %s (%s)",
                 self._bot_username,
                 me.get("_id"),
             )
-            asyncio.create_task(self._poll_loop())
+            self._stopping = False
+            self._poll_task = asyncio.create_task(self._poll_loop())
             return True
         except Exception as exc:
             logger.error("Rocket.Chat connect failed: %s", exc)
@@ -319,6 +356,9 @@ class RocketChatAdapter(BasePlatformAdapter):
     async def disconnect(self) -> None:
         """Stop the polling loop."""
         self._stopping = True
+        if self._poll_task is not None:
+            self._poll_task.cancel()
+            self._poll_task = None
         logger.info("Rocket.Chat adapter disconnected")
 
     async def send(
@@ -330,21 +370,11 @@ class RocketChatAdapter(BasePlatformAdapter):
     ) -> SendResult:
         """Send a text message to a Rocket.Chat room."""
         try:
-            payload: Dict[str, Any] = {"text": content, "roomId": chat_id}
-            thread_id = None
-            if metadata:
-                thread_id = metadata.get("thread_id")
-            if thread_id:
-                payload["tmid"] = thread_id
-
-            resp = self._session.post(
-                f"{self.url.rstrip('/')}/api/v1/chat.sendMessage",
-                json={"message": payload},
-                headers=self._headers(),
-                timeout=15,
+            thread_id = (metadata or {}).get("thread_id")
+            data = await asyncio.to_thread(
+                _post_message, self._session, self.url, self._headers(),
+                chat_id, content, thread_id,
             )
-            resp.raise_for_status()
-            data = resp.json()
 
             if data.get("success"):
                 msg_id = data.get("message", {}).get("_id")
@@ -361,13 +391,7 @@ class RocketChatAdapter(BasePlatformAdapter):
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
         """Return info about a Rocket.Chat room."""
         try:
-            resp = self._session.get(
-                f"{self.url.rstrip('/')}/api/v1/rooms.info",
-                params={"roomId": chat_id},
-                headers=self._headers(),
-                timeout=10,
-            )
-            data = resp.json()
+            data = await asyncio.to_thread(self._api_get, "rooms.info", {"roomId": chat_id})
             if data.get("success"):
                 room = data.get("room", {})
                 return {
@@ -398,14 +422,7 @@ class RocketChatAdapter(BasePlatformAdapter):
     async def _poll_dms(self) -> None:
         """Fetch DM subscriptions and process new messages."""
         try:
-            resp = self._session.get(
-                f"{self.url.rstrip('/')}/api/v1/subscriptions.get",
-                params={"limit": 50},
-                headers=self._headers(),
-                timeout=15,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            data = await asyncio.to_thread(self._api_get, "subscriptions.get", {})
 
             for sub in data.get("update", []):
                 if sub.get("t") != "d":
@@ -417,25 +434,40 @@ class RocketChatAdapter(BasePlatformAdapter):
             logger.error("Error polling DMs: %s", exc)
 
     async def _process_room(self, room_id: str) -> None:
-        """Fetch recent messages from a room, dispatch new ones to the gateway."""
+        """Fetch recent DM history from a room, dispatch new messages to the gateway."""
         try:
-            resp = self._session.get(
-                f"{self.url.rstrip('/')}/api/v1/chat.getMessages",
-                params={"roomId": room_id, "limit": 20},
-                headers=self._headers(),
-                timeout=15,
+            # im.history returns newest first. (chat.getMessages is a POST
+            # lookup by message ID, not a room-history endpoint.)
+            data = await asyncio.to_thread(
+                self._api_get, "im.history", {"roomId": room_id, "count": HISTORY_COUNT}
             )
-            resp.raise_for_status()
-            messages = resp.json().get("messages", [])
+            messages = data.get("messages", [])
+
+            seen = self._seen_by_room.get(room_id)
+            if seen is None:
+                # First time we see this room since startup: don't replay
+                # history the bot already answered. Only messages after the
+                # bot's most recent message in the room are treated as new.
+                seen = set()
+                for idx, msg in enumerate(messages):
+                    if msg.get("u", {}).get("_id") == self._user_id:
+                        seen.update(m.get("_id", "") for m in messages[idx:])
+                        break
+            # Bounded memory: only IDs still inside the history window matter.
+            self._seen_by_room[room_id] = {m.get("_id", "") for m in messages}
 
             for msg in reversed(messages):  # oldest → newest
                 msg_id = msg.get("_id", "")
-                if msg_id in self._seen_message_ids:
+                if msg_id in seen:
                     continue
-                self._seen_message_ids.add(msg_id)
+                seen.add(msg_id)
 
                 # Skip own messages
                 if msg.get("u", {}).get("_id") == self._user_id:
+                    continue
+
+                # Skip system messages (user joined, room renamed, ...)
+                if msg.get("t"):
                     continue
 
                 msg_text = (msg.get("msg") or "").strip()
@@ -485,8 +517,8 @@ class RocketChatAdapter(BasePlatformAdapter):
         """Check if a username is allowed to interact with the bot."""
         if self.allow_all:
             return True
-        if not self.allowed_users:
-            return True
+        # Deny by default: this bot fronts an agent with tool access, so an
+        # empty allowlist must not mean "anyone on the server".
         return username in self.allowed_users
 
 
